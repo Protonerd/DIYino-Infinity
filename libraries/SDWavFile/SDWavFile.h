@@ -96,6 +96,12 @@ public:
 
 	void VolumeShiftI2SSample(int32_t* apSample, char apVolume = 31);
 
+	void MixI2SSamples(int32_t* apSample1, int32_t* apSample2, int32_t* apSampleMixed);
+
+	void MixI2SBuffers(int32_t* apBuffer1, int32_t* apBuffer2, int aNumSamples);
+
+
+
 protected:
 	void ReadHeader();
 

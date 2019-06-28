@@ -245,3 +245,65 @@ memcpy(&lpSamplePtr[0], &lpTempBytes[0], sizeof(int16_t));
 memcpy(&lpSamplePtr[1], &lpTempBytes[1], sizeof(int16_t));
 
 }
+
+	void SDWavFile::MixI2SSamples(int32_t* apSample1, int32_t* apSample2, int32_t* apSampleMixed) {
+
+	//2x16bit temporary buffer to hold the raw 4 byte (32 bits) I2S sample
+	int16_t lpTempBytesSample1[2];
+	int16_t lpTempBytesSample2[2];
+	int32_t lpTempBytesMixed[2];
+	uint16_t* lpSamplePtr = (uint16_t*)apSampleMixed;
+
+	//Store raw 16-bit samples in temporary buffer from both buffers
+	memcpy(&lpTempBytesSample1[0], &apSample1[0], sizeof(int32_t));
+	memcpy(&lpTempBytesSample2[0], &apSample2[0], sizeof(int32_t));
+
+// calculation formula taken from this source:
+// https://www.vttoth.com/CMS/index.php/technical-notes/68
+
+for (int i=0;i<2;i++) {
+	// calculation if we treat samples as signed integers
+	lpTempBytesMixed[i]=(lpTempBytesSample1[i] + lpTempBytesSample2[i])-((lpTempBytesSample1[i] * lpTempBytesSample2[i])/32767);
+	
+	/*
+	// calculation if we treat samples as unsigned integer
+if (lpTempBytesSample1[i]<32767 and lpTempBytesSample2[i]<32767) {
+	lpTempBytesMixed[i]=(lpTempBytesSample1[i] * lpTempBytesSample2[i])/32767;
+}
+else {
+	lpTempBytesMixed[i]=2*(lpTempBytesSample1[i] + lpTempBytesSample2[i]) - ((lpTempBytesSample1[i] * lpTempBytesSample2[i])/32767) - 65535;
+}
+*/
+}
+//lpTempBytesMixed[0]=(lpTempBytesSample1[0]>>1) + (lpTempBytesSample2[0]>>1);
+
+//lpTempBytesMixed[1]=(lpTempBytesSample1[1]>>1) + (lpTempBytesSample2[1]>>1);
+
+memcpy(&lpSamplePtr[0], &lpTempBytesMixed[0], sizeof(int16_t));
+memcpy(&lpSamplePtr[1], &lpTempBytesMixed[1], sizeof(int16_t));
+
+
+
+
+}
+
+
+void SDWavFile::MixI2SBuffers(int32_t* apBuffer1, int32_t* apBuffer2, int aNumSamples) {
+
+
+//Read until requested size is met
+	int lSampleIndex = 0;
+	for(lSampleIndex = 0;
+		lSampleIndex < aNumSamples;
+		lSampleIndex++)
+	{
+		MixI2SSamples(&apBuffer1[lSampleIndex],&apBuffer2[lSampleIndex], &apBuffer1[lSampleIndex]);
+
+	}
+
+
+
+}
+
+
+

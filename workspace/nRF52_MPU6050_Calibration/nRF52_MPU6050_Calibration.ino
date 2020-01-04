@@ -57,6 +57,7 @@
 #include <MPU6050_6Axis_MotionApps20.h>
 #include <Adafruit_LittleFS.h>
 #include <InternalFileSystem.h>
+#include "Infinity_Basics.h"
 using namespace Adafruit_LittleFS_Namespace;
 
 // I'm not sure what it is for?
@@ -65,14 +66,20 @@ using namespace Adafruit_LittleFS_Namespace;
 #include <Wire.h>
 #endif
 
-//#define STREAM
 
 #define DEBUGVERBOSE
 
 #define MAIN_BUTTON     12
 #define LOCKUP_BUTTON   4
+#define MINT 7 // Pin connected to MPU Interrupt
 
 #define MPU_INTERRUPT
+#define SLEEP_AT_CALIBRATION_END
+#if defined SLEEP_AT_CALIBRATION_END
+  #define SLEEPYTIME (1000UL * 60 * 1) // 1 min
+#endif
+
+#define LOG_ACC_GYRO_VALUES
 ///////////////////////////////////   CONFIGURATION   /////////////////////////////
 //Change this 3 variables if you want to fine tune the skecth to your needs.
 int buffersize=1000;     //Amount of readings used to average, make it higher to get more precision but sketch will be slower  (default:1000)
@@ -82,6 +89,9 @@ int giro_deadzone=10;     //Giro error allowed, make it lower to get more precis
 int accel_offset_divisor=8; //8;
 int gyro_offset_divisor=4; //4;
 // deadzone: amount of variation between 2 consecutive measurements
+
+Infinity_Basics Infinity;
+
 
 // default I2C address is 0x68
 // specific I2C addresses may be passed as a parameter here
@@ -118,7 +128,7 @@ int16_t ax_offsetEEPROM,ay_offsetEEPROM,az_offsetEEPROM,gx_offsetEEPROM,gy_offse
 unsigned int calibratedOffsetAdress = 0;
 bool forceCalibration = true;
 bool CalibResult=false;
-unsigned long sndRepeat = millis();
+unsigned long sleepCnt = millis();
 
 unsigned int loopcount=0;
 
@@ -150,7 +160,11 @@ void setup() {
 // Serial line for debug
 Serial.begin(115200);
 
-
+// deactivate all LS stages
+digitalWrite(LS1, LOW);
+digitalWrite(LS2, LOW);
+digitalWrite(LS3, LOW);
+digitalWrite(LS4, LOW);
   
 
   //setup finished. Boot ready. We notify !
@@ -160,12 +174,13 @@ Serial.begin(115200);
   mpu.initialize();
 
   #ifdef MPU_INTERRUPT
+    // define MINT (interrupt0) as input
+    pinMode(MINT, INPUT_PULLUP);
     // enable Arduino interrupt detection
     Serial.println(F("Enabling interrupt detection (Arduino external interrupt 0)..."));
     // define Interrupt Service for aux. switch
-    attachInterrupt(0, ISR_MPUInterrupt, FALLING); // int.0 is the pin2 on the Nano board
-    // define D2 (interrupt0) as input
-    pinMode(2, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(MINT), ISR_MPUInterrupt, FALLING);
+    nrf_gpio_cfg_sense_input(MINT, NRF_GPIO_PIN_PULLUP , NRF_GPIO_PIN_SENSE_LOW);
   #endif
   
   if (mpu.testConnection() ) {
@@ -257,12 +272,19 @@ Serial.begin(115200);
   // start the file system lib and see if we have anything persisted
   InternalFS.begin();
   // format the Flash storage if the Calibration is forced
+  sleepCnt=millis();
   if (forceCalibration) {
         int inByte=0; 
         Serial.println(F("If you really want to force calibration, the Flash Storage needs to be formatted. press \"y\" to proceed \n"));
         while (!Serial.available()){
           delay(100);
-        }
+         if (millis() - sleepCnt > SLEEPYTIME) {
+            sleepCnt=millis();
+            #ifdef SLEEP_AT_CALIBRATION_END and SLEEPYTIME>5000
+              Infinity.enterDeepSleep(P1, intHandler);
+            #endif
+         }
+   }
         if (Serial.available() > 0) {
           inByte = Serial.read();
         }
@@ -277,7 +299,7 @@ Serial.begin(115200);
         }
         else {
            Serial.println("Continuing without formatting the Flash storage, new results will be appended to existing Calibration file MPUCalib.txt");
-           state=10;  // do nothing
+           state=4;  // do nothing
         }
 
   }
@@ -320,7 +342,6 @@ Serial.begin(115200);
     }
   }
 
-  
 }
 
 ///////////////////////////////////   LOOP   ////////////////////////////////////
@@ -330,8 +351,15 @@ void loop() {
 int16_t mpu_caliboffset_AccX, mpu_caliboffset_AccY, mpu_caliboffset_AccZ, mpu_caliboffset_GyroX, mpu_caliboffset_GyroY, mpu_caliboffset_GyroZ;
 int inByte=0; 
 
+   if (millis() - sleepCnt > SLEEPYTIME) {
+      sleepCnt=millis();
+      #ifdef SLEEP_AT_CALIBRATION_END and SLEEPYTIME>5000
+        Infinity.enterDeepSleep(P1, intHandler);
+      #endif
+   }
   
   if (state==0){
+      sleepCnt=millis();
       Serial.println("\nReading sensors for first time...");
       meansensors();
       //if (abs(mean_ax)>=32000){ax_initoffset=-mean_ax;Serial.println("\nRemove X-axis deadlock...");}
@@ -345,6 +373,7 @@ int inByte=0;
   }
 
   if (state==1) {
+    sleepCnt=millis();
     Serial.println("\nCalculating offsets...");
     CalibResult=calibration();
     if (CalibResult) {
@@ -358,6 +387,7 @@ int inByte=0;
   }
 
   if (state==2) {
+    sleepCnt=millis();
     meansensors();
     ax_offsetEEPROM=ax_offset;
     ay_offsetEEPROM=ay_offset;
@@ -447,6 +477,7 @@ int inByte=0;
 
             file.close();
             Serial.println("Calibrated offset values stored in the internal Flash!");
+            sleepCnt=millis();
             state++;
       }
   }
@@ -458,11 +489,9 @@ else{
   state=4;
 }
  if (state==4) { // execute test routine
-   if (millis() - sndRepeat > 3000) { // repeat first sound file every 3 secs
-      sndRepeat=millis();
-   }
 
 
+#ifdef LOG_ACC_GYRO_VALUES
   mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
              // display tab-separated accel/gyro x/y/z values
             Serial.print("Acceleration- and Gyro values:\t");
@@ -472,7 +501,9 @@ else{
             Serial.print(gx); Serial.print("\t");
             Serial.print(gy); Serial.print("\t");
             Serial.println(gz);            
- 
+#endif // LOG_ACC_GYRO_VALUES
+
+#ifndef MPU_INTERRUPT
   mpuIntStatus = mpu.getIntStatus();
     if (mpuIntStatus > 60 and mpuIntStatus < 70) {
       /*
@@ -483,10 +514,12 @@ else{
                   Serial.println("                       CLASH!                                    ");
                   Serial.println("*");Serial.println("*");Serial.println("*");Serial.println("*");Serial.println("*");
                   Serial.println("*");Serial.println("*");Serial.println("*");Serial.println("*");Serial.println("*");
+                  
 
 
 
-                } 
+                }
+#endif // not MPU_INTERRUPT 
 
  }
 }
@@ -593,4 +626,14 @@ bool calibration(){
 
 void ISR_MPUInterrupt() {
     Serial.print(F("\nMPU6050 interrupt "));
+
+    Serial.println("*");Serial.println("*");Serial.println("*");Serial.println("*");Serial.println("*");
+                  Serial.println("*");Serial.println("*");Serial.println("*");Serial.println("*");Serial.println("*");
+                  Serial.println("                       CLASH!                                    ");
+                  Serial.println("*");Serial.println("*");Serial.println("*");Serial.println("*");Serial.println("*");
+                  Serial.println("*");Serial.println("*");Serial.println("*");Serial.println("*");Serial.println("*");
+}
+
+void intHandler() {
+  Serial.println("Interrupt received...");
 }
